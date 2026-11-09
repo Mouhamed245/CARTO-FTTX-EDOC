@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="referrer" content="origin">
 <title>Réseau FTTX – Orange Sénégal</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -285,6 +286,25 @@ header{background:#161b22;border-bottom:1px solid #30363d;padding:0 16px;height:
   .pbo-modal-table thead th{padding:6px 6px;font-size:9px;}
   .pbo-modal-table tbody td{padding:6px 6px;white-space:nowrap;}
 }
+
+/* Écrans moyens / iframe SharePoint : l'en-tête s'adapte à la largeur disponible */
+@media (min-width: 769px) and (max-width: 1450px) {
+  header{height:auto;min-height:68px;padding:6px 12px;flex-wrap:wrap;align-items:center;gap:6px 10px;}
+  .logo-block{flex:0 1 auto;min-width:0;}
+  .logo-tags{flex-wrap:wrap;}
+  .search-gps-bar{flex:1 1 260px;min-width:200px;margin:0;}
+  .search-wrap{max-width:100%;}
+  .search-wrap input::placeholder{text-overflow:ellipsis;}
+  .header-stats{order:4;flex:1 1 100%;flex-wrap:wrap;gap:5px;}
+}
+@media (min-width: 769px) and (max-width: 1100px) {
+  .logo-main{font-size:13px;}
+  .stat-pill{padding:3px 8px;font-size:9.5px;}
+  .btn-mypos{padding:4px 8px;font-size:10px;}
+}
+
+/* Fond sombre : OSM inversé (CartoDB exige maintenant une clé API) */
+.tiles-dark-osm{filter:invert(1) hue-rotate(180deg) brightness(.95) contrast(.9);}
 
 /* Petits écrans (iPhone SE et modèles étroits) */
 @media (max-width: 380px) {
@@ -630,13 +650,24 @@ const BASEMAPS = {
     {maxZoom:20, attribution:'© Google Hybride',   subdomains:['0','1','2','3']}),
   road:      L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
     {maxZoom:20, attribution:'© Google Maps',      subdomains:['0','1','2','3']}),
-  dark:      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-    {maxZoom:19, attribution:'© CARTO',            subdomains:'abcd'}),
+  dark:      L.tileLayer('https://mt{s}.google.com/vt/lyrs=m&x={x}&y={y}&z={z}',
+    {maxZoom:20, attribution:'© Google Maps (sombre)', subdomains:['0','1','2','3'], className:'tiles-dark-osm'}),
   osm:       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-    {maxZoom:19, attribution:'© OpenStreetMap'}),
+    {maxZoom:19, attribution:'© OpenStreetMap', referrerPolicy:'origin'}),
 };
 let currentBasemap = BASEMAPS.hybrid;
 currentBasemap.addTo(map);
+
+// L'en-tête peut changer de hauteur (retour à la ligne) : on réajuste la carte
+(function() {
+  let _t = null;
+  const fit = function() { clearTimeout(_t); _t = setTimeout(function() { map.invalidateSize(); }, 80); };
+  window.addEventListener('resize', fit);
+  if (window.ResizeObserver) {
+    const h = document.querySelector('header');
+    if (h) new ResizeObserver(fit).observe(h);
+  }
+})();
 
 window.setBasemap = function(key) {
   map.removeLayer(currentBasemap);
@@ -2742,8 +2773,22 @@ function makePersonIcon(heading) {
 
 let _lastHeading = null;
 
+// Dans une iframe SharePoint, la géolocalisation est bloquée (attribut allow supprimé).
+// On ouvre alors la carte dans un onglet normal, où le GPS démarre automatiquement.
+const IN_IFRAME = (function() { try { return window.self !== window.top; } catch(e) { return true; } })();
+const STANDALONE_URL = location.origin + location.pathname;
+
 document.getElementById('btn-mypos').addEventListener('click', function() {
   const btn = this;
+  if (IN_IFRAME && !myPosActive) {
+    const w = window.open(STANDALONE_URL + '?locate=1', '_blank');
+    if (!w) {
+      setInfo('<span style="color:#f59e0b">⚠ Pop-up bloquée. <a href="' + STANDALONE_URL + '?locate=1" target="_blank" rel="noopener" style="color:#f97316;font-weight:700">Ouvrir la carte avec Ma position ↗</a></span>');
+    } else {
+      setInfo('<span style="color:#22c55e">🧭 Carte ouverte dans un nouvel onglet : la position y sera activée.</span>');
+    }
+    return;
+  }
   if (myPosActive) {
     if (myPosWatchId != null) navigator.geolocation.clearWatch(myPosWatchId);
     if (myPosMarker)    { map.removeLayer(myPosMarker);    myPosMarker    = null; }
@@ -2807,6 +2852,17 @@ document.getElementById('btn-mypos').addEventListener('click', function() {
     { enableHighAccuracy:true, timeout:20000, maximumAge:0 }
   );
 });
+
+// Lancement automatique du GPS si la page est ouverte avec ?locate=1 (onglet normal)
+if (!IN_IFRAME && new URLSearchParams(location.search).get('locate') === '1') {
+  window.addEventListener('load', function() {
+    setTimeout(function() {
+      const b = document.getElementById('btn-mypos');
+      if (b && !myPosActive) b.click();
+      try { history.replaceState(null, '', STANDALONE_URL); } catch(e) {}
+    }, 1200);
+  });
+}
 
 // ── PLANS QGIS ────────────────────────────────────────────────
 // Clé de la plaque actuellement affichée sur la carte (une seule à la fois)
